@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -77,15 +78,36 @@ func getReadHandler(t *testing.T, series []prompb.TimeSeries) http.Handler {
 			Results: make([]*prompb.QueryResult, len(req.Queries)),
 		}
 
-		// Since the matchers would be ""=~.* which means that all available matchers.
-		// In order to avoid creating another reader and then facing the dupicate enum issue due to
-		// importing promscale.prompb and prometheus.prompb, we just listen to the start and end
-		// timestamps only.
+		matchers := req.Queries[0].Matchers
+		matchLabels := func(s prompb.TimeSeries) bool {
+			for _, l := range s.Labels {
+				for _, m := range matchers {
+					if m.Type != prompb.LabelMatcher_RE {
+						t.Fatalf("unsupported label matcher")
+					}
+
+					if m.Name == l.Name {
+						re := regexp.MustCompile(m.Value)
+						if !re.MatchString(l.Value) {
+							return false
+						}
+					}
+				}
+			}
+			
+			return true
+		}
+
 		startTs := req.Queries[0].StartTimestampMs
 		endTs := req.Queries[0].EndTimestampMs
 		ts := make([]*prompb.TimeSeries, len(series)) // Since the response is going to be the number of time-series.
 		for i, s := range series {
-			serie := &prompb.TimeSeries{}
+			ts[i] = &prompb.TimeSeries{}
+
+			if !matchLabels(s) {
+				continue
+			}
+
 			var samples []prompb.Sample
 			for _, sample := range s.Samples {
 				if sample.Timestamp >= startTs && sample.Timestamp < endTs {
@@ -95,11 +117,9 @@ func getReadHandler(t *testing.T, series []prompb.TimeSeries) http.Handler {
 				}
 			}
 			if len(samples) > 0 {
-				serie.Labels = s.Labels
-				serie.Samples = samples
+				ts[i].Labels = s.Labels
+				ts[i].Samples = samples
 			}
-			ts[i] = serie
-
 		}
 		if len(resp.Results) == 0 {
 			t.Fatal("queries num is 0")
