@@ -42,6 +42,7 @@ type config struct {
 	progressMetricName string
 	progressMetricURL  string
 	progressEnabled    bool
+	readLabelRegex     string
 	readerAuth         utils.Auth
 	writerAuth         utils.Auth
 }
@@ -92,7 +93,7 @@ func main() {
 		sigBlockRead = make(chan *plan.Block)
 	)
 	cont, cancelFunc := context.WithCancel(context.Background())
-	read, err := reader.New(cont, conf.readURL, planner, conf.concurrentPulls, sigBlockRead)
+	read, err := reader.NewWithLabelRegex(cont, conf.readURL, planner, conf.concurrentPulls, sigBlockRead, conf.readLabelRegex)
 	if err != nil {
 		log.Error("msg", "could not create reader", "error", err)
 		os.Exit(2)
@@ -155,6 +156,7 @@ func parseFlags(conf *config, args []string) {
 	flag.BoolVar(&conf.progressEnabled, "progress-enabled", true, "This flag tells the migrator, whether or not to use the progress mechanism. It is helpful if you want to "+
 		"carry out migration with the same time-range. If this is enabled, the migrator will resume the migration from the last time, where it was stopped/interrupted. "+
 		"If you do not want any extra metric(s) while migration, you can set this to false. But, setting this to false will disble progress-metric and hence, the ability to resume migration.")
+	flag.StringVar(&conf.readLabelRegex, "read-label-regex", reader.DefaultLabelMatchRegex, "A regular expression that all source label names will be matched against.")
 	// Authentication.
 	// TODO: Auth/password via password_file and bearer_token via bearer_token_file.
 	flag.StringVar(&conf.readerAuth.Username, "read-auth-username", "", "Auth username for remote-read storage.")
@@ -197,6 +199,11 @@ func validateConf(conf *config) error {
 		return fmt.Errorf("remote write storage url needs to be specified. Without write storage url, data migration cannot begin")
 	case conf.progressEnabled && strings.TrimSpace(conf.progressMetricURL) == "":
 		return fmt.Errorf("invalid input: read url for remote-write storage should be provided when progress metric is enabled. To disable progress metric, use -progress-enabled=false")
+	case conf.readLabelRegex != reader.DefaultLabelMatchRegex:
+		_, err := regexp.Compile(conf.readLabelRegex)
+		if err != nil {
+			return fmt.Errorf("invalid read label regex: %v", err)
+		}
 	}
 	httpConfig := conf.readerAuth.ToHTTPClientConfig()
 	if err := httpConfig.Validate(); err != nil {
