@@ -18,6 +18,8 @@ import (
 
 const defaultReadTimeout = time.Minute * 5
 
+const DefaultLabelMatchRegex = ".*"
+
 type RemoteRead struct {
 	c               context.Context
 	url             string
@@ -26,6 +28,7 @@ type RemoteRead struct {
 	concurrentPulls int
 	sigBlockRead    chan *plan.Block // To the writer.
 	SigForceStop    chan struct{}
+	labelMatchRegex string
 }
 
 // New creates a new RemoteRead. It creates a ReadClient that is imported from Prometheus remote storage.
@@ -42,7 +45,22 @@ func New(c context.Context, readStorageUrl string, p *plan.Plan, numConcurrentPu
 		client:          rc,
 		concurrentPulls: numConcurrentPulls,
 		sigBlockRead:    sigRead,
+		labelMatchRegex: DefaultLabelMatchRegex,
 	}
+	return read, nil
+}
+
+func NewWithLabelRegex(c context.Context, readStorageUrl string, p *plan.Plan,
+	numConcurrentPulls int, sigRead chan *plan.Block,
+	labelRegex string) (*RemoteRead, error) {
+
+	read, err := New(c, readStorageUrl, p, numConcurrentPulls, sigRead)
+	if err != nil {
+		return nil, err
+	}
+	
+	read.labelMatchRegex = labelRegex
+
 	return read, nil
 }
 
@@ -77,7 +95,7 @@ func (rr *RemoteRead) Run(errChan chan<- error) {
 				errChan <- fmt.Errorf("remote-run run: %w", err)
 				return
 			}
-			ms := []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, labels.MetricName, ".*")}
+			ms := []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, labels.MetricName, rr.labelMatchRegex)}
 			err = blockRef.Fetch(rr.c, rr.client, blockRef.Mint(), blockRef.Maxt(), ms)
 			if err != nil {
 				errChan <- fmt.Errorf("remote-run run: %w", err)
